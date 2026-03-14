@@ -103,10 +103,13 @@
 - name: Apply Kube-VIP RBAC
       command: kubectl apply -f https://kube-vip.io/manifests/rbac.yaml
 
-    - name: Copy Kube-VIP DaemonSet to Master
-      copy:
-        src: manifests/kube-vip-daemonset.yaml
+    - name: Generate Kube-VIP Manifest from Template
+      template:
+        src: manifests/kube-vip.yaml.j2
         dest: /tmp/kube-vip-daemonset.yaml
+      vars:
+        vip_address: "10.3.160.100"
+        vip_interface: "eth0" # Or ens18 depending on your Proxmox setup
 
     - name: Apply Kube-VIP DaemonSet
       command: kubectl apply -f /tmp/kube-vip-daemonset.yaml
