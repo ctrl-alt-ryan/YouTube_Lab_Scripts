@@ -1,0 +1,133 @@
+I. The Foundation: VM/Server Prep
+
+Before installing Kubernetes, your base OS (Ubuntu/Fedora) needs to be optimized for a "Template" or Cluster environment.
+OS Prerequisites (Do this on all 3 nodes). For mine, I used Ubuntu Server LTS.
+
+    Specs: 2 vCPU, 4GB RAM (Minimum for Monitoring Stack), 20GB Disk.
+
+    Network: Static IPs are mandatory for a stable cluster.
+
+Bash
+
+# 1. Install QEMU Guest Agent (Crucial for Proxmox visibility)
+sudo apt update && sudo apt install -y qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+
+# 2. Disable Swap (Kubernetes Requirement)
+sudo swapoff -a
+sudo sed -i '/swap/s/^/#/' /etc/fstab  # Comments out swap in fstab permanently
+
+# 3. Clean up Machine IDs (If you plan on cloning this VM)
+sudo truncate -s 0 /etc/machine-id
+sudo rm /var/lib/dbus/machine-id
+sudo ln -s /etc/machine-id /var/lib/dbus/machine-id
+
+# Clear history for the clean "GitHub" look
+sudo history -c && history -w
+
+#shutdown the VM and convert to a template. Use this template along with cloud-init to customize static IP and set local admin credentials and SSH keys. If there are issues run the below command:
+sudo cloud-init clean --reboot
+
+For my quick Lab, I set up 3 VMs: 
+  x1 Controller Node
+  x2 Worker nodes
+
+  Once deployed, and networking and names are confirmed, proceed with the next step.
+
+II. Kubernetes Deployment (K3s)
+Node 1: The Control Plane (The Brain)
+
+We are disabling the default servicelb (Clipper) because we are going to use MetalLB for professional IP management.
+Bash
+
+# Install K3s with custom config
+curl -sfL https://get.k3s.io | sh -s - server \
+  --write-kubeconfig-mode 644 \
+  --disable servicelb
+
+# Get your Join Token (You'll need this for the workers)
+sudo cat /var/lib/rancher/k3s/server/node-token
+
+Nodes 2 & 3: The Workers (The Muscle)
+
+Replace [MASTER-IP] and [TOKEN] with your actual data.
+Bash
+
+curl -sfL https://get.k3s.io | K3S_URL=https://[MASTER-IP]:6443 \
+K3S_TOKEN=[YOUR-TOKEN-HERE] sh -
+
+Local Management (Your Laptop/Workstation)
+
+Copy the config so you can run kubectl from your desk.
+Bash
+
+mkdir -p ~/.kube
+scp [USER]@[MASTER-IP]:/etc/rancher/k3s/k3s.yaml ~/.kube/config
+# Edit the config to replace 127.0.0.1 with the Master IP
+sed -i 's/127.0.0.1/[MASTER-IP]/g' ~/.kube/config
+
+III. Network Orchestration (MetalLB)
+
+MetalLB allows your cluster to have "External IPs" on your home network.
+Bash
+
+# 1. Install MetalLB
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.5/config/manifests/metallb-native.yaml
+
+# 2. Configure the IP Pool (metallb-config.yaml)
+cat <<EOF > metallb-config.yaml
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: main-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 10.3.200.150-10.3.200.160 # Adjust for your network range
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: main-adv
+  namespace: metallb-system
+EOF
+
+kubectl apply -f metallb-config.yaml
+
+IV. Deploying the Monitoring Stack
+
+Now we deploy Prometheus and Grafana using Helm.
+Bash
+
+# 1. Install Helm on Laptop
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# 2. Add Repos
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+# 3. Deploy Stack
+kubectl create namespace monitoring
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --set grafana.adminPassword=admin \
+  --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+
+Exposing Grafana to the Network
+
+We change the service type to LoadBalancer so MetalLB gives it a real IP.
+Bash
+
+kubectl patch svc monitoring-grafana -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
+
+# Check your IP (Look for EXTERNAL-IP)
+kubectl get svc -n monitoring
+
+
+#Verification. User the following commands to check config and statuses:
+kubectl get nodes
+kubectl cluster-info
+helm list -A
+
+
