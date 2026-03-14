@@ -1,0 +1,71 @@
+---
+- name: Prepare Nodes
+  hosts: all
+  become: true
+  tasks:
+    - name: Disable Swap
+      command: swapoff -a
+    - name: Remove Swap from fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+.*)$'
+        replace: '# \1'
+
+- name: Initialize First Control Node
+  hosts: k3s-ctlr-01
+  become: true
+  tasks:
+    - name: Install K3s on First Master (Init)
+      shell: >
+        curl -sfL https://get.k3s.io | K3S_TOKEN=my-shared-secret sh -s - server 
+        --cluster-init 
+        --tls-san 10.3.160.100
+        --disable servicelb
+      # 10.3.160.100 is your Kube-VIP address for HA access
+
+    - name: Get Node Token
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: node_token
+
+- name: Join Remaining Control Nodes
+  hosts: controllers
+  exclude_hosts: k3s-ctlr-01
+  become: true
+  tasks:
+    - name: Join Secondary Masters
+      shell: >
+        curl -sfL https://get.k3s.io | K3S_TOKEN=my-shared-secret sh -s - server
+        --server https://10.3.160.101:6443
+        --disable servicelb
+
+- name: Join Worker Nodes
+  hosts: workers
+  become: true
+  tasks:
+    - name: Join Workers to Cluster
+      shell: >
+        curl -sfL https://get.k3s.io | K3S_URL=https://10.3.160.100:6443 
+        K3S_TOKEN=my-shared-secret sh -
+
+- name: Configure Kube-VIP for HA
+  hosts: k3s-ctlr-01
+  become: true
+  vars:
+    vip_address: 10.3.160.100  # The floating IP from your layout
+    interface: eth0            # Double check this on your Ubuntu VM (run 'ip a')
+  tasks:
+    - name: Apply Kube-VIP RBAC
+      command: kubectl apply -f https://kube-vip.io/manifests/rbac.yaml
+
+    - name: Generate and Apply Kube-VIP DaemonSet
+      shell: >
+        docker run --network host --rm ghcr.io/kube-vip/kube-vip:main manifest daemonset
+        --address {{ vip_address }}
+        --incluster
+        --taint
+        --controlplane
+        --services
+        --arp
+        --leaderElection
+        --interface {{ interface }} | kubectl apply -f -
