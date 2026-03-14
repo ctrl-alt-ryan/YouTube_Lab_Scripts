@@ -1,4 +1,9 @@
 variable "nodes" {
+  type = map(object({
+    vmid = number
+    ip   = string
+    gw   = string
+  }))
   default = {
     "k3s-ctlr-01"   = { vmid = 301, ip = "10.3.160.101/16", gw = "10.3.0.1" }
     "k3s-ctlr-02"   = { vmid = 302, ip = "10.3.160.102/16", gw = "10.3.0.1" }
