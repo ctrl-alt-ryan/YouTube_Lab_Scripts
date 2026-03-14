@@ -17,6 +17,10 @@ sudo systemctl enable --now qemu-guest-agent
 sudo swapoff -a
 sudo sed -i '/swap/s/^/#/' /etc/fstab  # Comments out swap in fstab permanently
 
+# If issues this work on both Linux and macOS
+sed -i.bak 's/127.0.0.1/[MASTER-IP]/g' ~/.kube/config
+
+
 # 3. Clean up Machine IDs (If you plan on cloning this VM)
 sudo truncate -s 0 /etc/machine-id
 sudo rm /var/lib/dbus/machine-id
@@ -93,6 +97,9 @@ metadata:
 EOF
 
 kubectl apply -f metallb-config.yaml
+
+
+TIP: Wait about 60 seconds after installing MetalLB before applying the config, or the validating webhook might reject the request.
 
 IV. Deploying the Monitoring Stack
 
