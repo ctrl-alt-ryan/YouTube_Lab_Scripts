@@ -99,3 +99,14 @@
           --set grafana.adminPassword=admin \
           --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
           --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+
+- name: Apply Kube-VIP RBAC
+      command: kubectl apply -f https://kube-vip.io/manifests/rbac.yaml
+
+    - name: Copy Kube-VIP DaemonSet to Master
+      copy:
+        src: manifests/kube-vip-daemonset.yaml
+        dest: /tmp/kube-vip-daemonset.yaml
+
+    - name: Apply Kube-VIP DaemonSet
+      command: kubectl apply -f /tmp/kube-vip-daemonset.yaml
