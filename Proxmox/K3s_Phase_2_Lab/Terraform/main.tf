@@ -1,7 +1,7 @@
 resource "proxmox_vm_qemu" "k3s_nodes" {
   for_each    = var.nodes
   name        = each.key
-  target_node = "node4"
+  target_node = "node4" #Proxmox Node name
   vmid        = each.value.vmid
 
   clone       = "template-ubuntu-24" #Name of your Template
