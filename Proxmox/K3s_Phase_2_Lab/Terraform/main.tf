@@ -4,7 +4,7 @@ resource "proxmox_vm_qemu" "k3s_nodes" {
   target_node = "node4"
   vmid        = each.value.vmid
 
-  clone       = "template-ubuntu-24"
+  clone       = "template-ubuntu-24" #Name of your Template
   full_clone  = true
 
   agent   = 1
