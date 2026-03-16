@@ -56,6 +56,8 @@ This phase moves away from "Manual Clicks" and into Automated Deployment. We use
     cd ../ansible
     ansible-playbook -i inventory.ini deploy_k3s.yml
 
+    ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini deploy_k3s.yml
+
 What this playbook does:
 
     Disables swap and prepares all 5 nodes.
