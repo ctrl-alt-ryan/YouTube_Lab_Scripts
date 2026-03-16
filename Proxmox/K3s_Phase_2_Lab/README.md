@@ -130,17 +130,19 @@ Install the stack with custom flags to ensure compatibility with K3s and to allo
 Bash
 
 helm install monitoring prometheus-community/kube-prometheus-stack \
+  --create-namespace \
   --namespace monitoring \
   --set grafana.adminPassword=admin \
   --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
-  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
-
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=
+  
 4. Expose Grafana via MetalLB
 
 By default, the Grafana service is internal (ClusterIP). We use the following patch to change it to a LoadBalancer type, which triggers MetalLB to assign it a dedicated IP from your network pool.
 Bash
 
 kubectl patch svc monitoring-grafana -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
+
 
 5. Verification
 
