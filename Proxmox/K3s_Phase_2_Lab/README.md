@@ -92,3 +92,62 @@ What this playbook does:
 
     The HA Test:
     Go to Proxmox and Stop k3s-ctlr-01. Run ping 10.3.160.100. The ping should continue without interruption as the VIP moves to ctlr-02.
+
+    
+Phase II: Observability & Monitoring
+
+Once the Ansible automation completes, the cluster is ready for the kube-prometheus-stack. This provides a full monitoring suite including Prometheus for data collection and Grafana for visualization.
+1. Repository Setup
+
+Add the Prometheus community Helm repository to your local machine:
+Bash
+
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+2. Prepare the Environment
+
+Create a dedicated namespace to isolate the monitoring stack:
+Bash
+
+kubectl create namespace monitoring
+
+3. Deploy the Stack
+
+Install the stack with custom flags to ensure compatibility with K3s and to allow Grafana to auto-discover cluster resources.
+Bash
+
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --set grafana.adminPassword=admin \
+  --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+
+4. Expose Grafana via MetalLB
+
+By default, the Grafana service is internal (ClusterIP). We use the following patch to change it to a LoadBalancer type, which triggers MetalLB to assign it a dedicated IP from your network pool.
+Bash
+
+kubectl patch svc monitoring-grafana -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
+
+5. Verification
+
+Wait a few minutes for the container images to pull and initialize. You can monitor the status with these commands:
+
+Check Service IP (Access Grafana here):
+Bash
+
+kubectl get svc -n monitoring monitoring-grafana
+
+Check Pod Health:
+Bash
+
+kubectl get pods -n monitoring
+
+Post-Installation Note
+
+    Access: Open your browser to the EXTERNAL-IP found in step 5.
+
+    Credentials: Username: admin | Password: admin
+
+    Default Dashboards: Go to Dashboards -> Browse and look for the "Kubernetes / Compute Resources / Cluster" dashboard for an immediate high-level view of your Proxmox node health.
