@@ -2,14 +2,18 @@ terraform {
   required_providers {
     proxmox = {
       source  = "telmate/proxmox"
-      version = "3.0.1-rc4" # Use the latest stable/rc version
+      version = "3.0.2-rc07" # Use the latest stable/rc version
     }
   }
 }
 
 provider "proxmox" {
-  pm_api_url      = "https://[PROXMOX-IP]:8006/api2/json"
-  pm_api_token_id = "terraform-prov@pve!token-name" # The ID you created
-  pm_api_token_secret = "your-api-secret-here"
-  pm_tls_insecure = true # Set to false if you have valid SSL
+  pm_api_url      = "https://10.3.140.204:8006/api2/json"
+  pm_user         = "root@pam"
+  pm_password     = "Xpn4412!!" # Not a token
+  pm_tls_insecure = true
+  pm_log_enable   = true
+  pm_debug            = true
+  pm_parallel         = 1
+  pm_timeout          = 600
 }
