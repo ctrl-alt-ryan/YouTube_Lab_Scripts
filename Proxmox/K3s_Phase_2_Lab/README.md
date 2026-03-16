@@ -79,6 +79,7 @@ What this playbook does:
 
     mkdir -p ~/.kube
     scp ryan@10.3.160.101:~/.kube/config ~/.kube/config-rv
+    (ssh xpsadmin@10.3.160.101 "sudo cat /etc/rancher/k3s/k3s.yaml" > ~/.kube/config-rv)
     export KUBECONFIG=~/.kube/config-rv
     sed -i 's/127.0.0.1/10.3.160.100/g' ~/.kube/config-rv
 
