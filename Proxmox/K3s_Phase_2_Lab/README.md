@@ -14,14 +14,25 @@ This phase moves away from "Manual Clicks" and into Automated Deployment. We use
 
 2. Software on your Workstation
 
-    Terraform: Install Link
+    Terraform: sudo dnf install terraform (Fedora) or sudo apt install terraform (Ubuntu).
 
     Ansible: sudo dnf install ansible (Fedora) or sudo apt install ansible (Ubuntu).
 
     SSH Keys: An existing key pair (~/.ssh/id_rsa.pub).
+   example:
+   check if you have a key:
+   ls -l ~/.ssh/id_rsa.pub
+
+   If no key, be sure to generate one:
+   ssh-keygen -t rsa -b 4096 -C "your-computer-name"
+
+   to list existing key:
+   cat ~/.ssh/id_rsa.pub
 
 🛠️ Step 1: Terraform Provisioning
 
+    ***I had issues with the version of the Proxmox Provider I was using and the version of Proxmox I'm running (v9.1.6), to pivot I ended up using the root account. If this is for anything other than a homelab,         I would ensure to use the API token exclusively.***
+    
     Create an API Token: In Proxmox, go to Datacenter > Permissions > API Tokens. Generate a token for your user (uncheck "Privilege Separation").
 
     Setup Variables: Create a terraform/terraform.tfvars file (do not commit this!):
@@ -56,6 +67,7 @@ This phase moves away from "Manual Clicks" and into Automated Deployment. We use
     cd ../ansible
     ansible-playbook -i inventory.ini deploy_k3s.yml
 
+    To get around verififying fingerprints:
     ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini deploy_k3s.yml
 
 What this playbook does:
@@ -78,8 +90,8 @@ What this playbook does:
     Bash
 
     mkdir -p ~/.kube
-    scp ryan@10.3.160.101:~/.kube/config ~/.kube/config-rv
-    (ssh xpsadmin@10.3.160.101 "sudo cat /etc/rancher/k3s/k3s.yaml" > ~/.kube/config-rv)
+    scp user@10.3.160.101:~/.kube/config ~/.kube/config-rv
+    (ssh user@10.3.160.101 "sudo cat /etc/rancher/k3s/k3s.yaml" > ~/.kube/config-rv)
     export KUBECONFIG=~/.kube/config-rv
     sed -i 's/127.0.0.1/10.3.160.100/g' ~/.kube/config-rv
 
