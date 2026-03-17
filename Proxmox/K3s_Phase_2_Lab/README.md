@@ -95,6 +95,10 @@ What this playbook does:
     export KUBECONFIG=~/.kube/config-rv
     sed -i 's/127.0.0.1/10.3.160.100/g' ~/.kube/config-rv
 
+    If you've done this multiple times like me, you need to clean up the old SSH keys prior.
+    Strip old SSH keys:
+    ssh-keygen -R 10.3.160.101
+
     Check the Cluster:
     Bash
 
