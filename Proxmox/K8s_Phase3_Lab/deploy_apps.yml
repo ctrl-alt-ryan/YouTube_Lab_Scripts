@@ -1,0 +1,100 @@
+---
+- name: "Deploy All Lab Services and Monitoring"
+  hosts: k8s_cluster
+  become: true
+  vars:
+    controller_ip: "{{ hostvars['k8s-controller-01']['ansible_host'] | default('10.3.160.101') }}"
+
+  tasks:
+    # --- 1. DISCOVER LONGHORN PORT ---
+    - name: "Get Actual Longhorn NodePort"
+      shell: "/usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config get svc longhorn-frontend -n longhorn-system -o jsonpath='{.spec.ports[0].nodePort}'"
+      register: longhorn_port_discovery
+      run_once: true
+      delegate_to: k8s-controller-01
+      changed_when: false
+
+    - name: "Set Longhorn Port Variable"
+      set_fact:
+        longhorn_nodeport: "{{ longhorn_port_discovery.stdout }}"
+      run_once: true
+
+    # --- 2. UPDATE HOMEPAGE CONFIG ---
+    - name: "Apply Homepage with All Lab Services"
+      shell: |
+        /usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config apply -f - <<EOF
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: homepage-config
+        data:
+          settings.yaml: |
+            title: "Ctrl Alt Ryan Lab"
+          services.yaml: |
+            - Infrastructure:
+                - Grafana:
+                    icon: grafana.png
+                    href: http://{{ controller_ip }}:32000
+                - Longhorn:
+                    icon: longhorn.png
+                    href: http://{{ controller_ip }}:{{ longhorn_nodeport }}
+            - Tools:
+                - Speedtest:
+                    icon: openspeedtest.png
+                    href: http://{{ controller_ip }}:31000
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: homepage
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: homepage
+          template:
+            metadata:
+              labels:
+                app: homepage
+            spec:
+              containers:
+              - name: homepage
+                image: ghcr.io/gethomepage/homepage:latest
+                env:
+                - name: HOMEPAGE_ALLOWED_HOSTS
+                  value: "10.3.160.101,10.3.160.101:30081,localhost,*"
+                volumeMounts:
+                - name: config
+                  mountPath: /app/config/settings.yaml
+                  subPath: settings.yaml
+                - name: config
+                  mountPath: /app/config/services.yaml
+                  subPath: services.yaml
+              volumes:
+              - name: config
+                configMap:
+                  name: homepage-config
+        EOF
+      run_once: true
+      delegate_to: k8s-controller-01
+
+    - name: "Bounce Homepage Pod"
+      shell: "/usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config delete pod -l app=homepage --force --grace-period=0"
+      run_once: true
+      delegate_to: k8s-controller-01
+      ignore_errors: true
+
+    # --- 3. FINAL SUMMARY ---
+    - name: "Display Full Lab Access Info"
+      run_once: true
+      delegate_to: k8s-controller-01
+      debug:
+        msg:
+          - "-------------------------------------------------------"
+          - "SUCCESS: ALL SERVICES ARE LIVE"
+          - "-------------------------------------------------------"
+          - "MAIN DASHBOARD:  http://{{ controller_ip }}:30081"
+          - "GRAFANA:         http://{{ controller_ip }}:32000"
+          - "SPEEDTEST:       http://{{ controller_ip }}:31000"
+          - "LONGHORN UI:     http://{{ controller_ip }}:{{ longhorn_nodeport }}"
+          - "-------------------------------------------------------"
