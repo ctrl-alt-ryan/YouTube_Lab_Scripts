@@ -1,100 +1,114 @@
 ---
-- name: "Deploy All Lab Services and Monitoring"
+- name: "XPS Cluster: Storage & Apps Deployment"
   hosts: k8s_cluster
   become: true
-  vars:
-    controller_ip: "{{ hostvars['k8s-controller-01']['ansible_host'] | default('10.3.160.101') }}"
+  any_errors_fatal: true
 
   tasks:
-    # --- 1. DISCOVER LONGHORN PORT ---
-    - name: "Get Actual Longhorn NodePort"
-      shell: "/usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config get svc longhorn-frontend -n longhorn-system -o jsonpath='{.spec.ports[0].nodePort}'"
-      register: longhorn_port_discovery
-      run_once: true
-      delegate_to: k8s-controller-01
-      changed_when: false
+    # --- STAGE 1: STORAGE PREP ---
+    - name: "Prepare 50GB Data Drives"
+      when: "'worker' in inventory_hostname"
+      block:
+        - name: "Install Longhorn Prereqs"
+          ansible.builtin.apt:
+            name: [open-iscsi, nfs-common, jq]
+            state: present
 
-    - name: "Set Longhorn Port Variable"
-      set_fact:
-        longhorn_nodeport: "{{ longhorn_port_discovery.stdout }}"
-      run_once: true
+        - name: "Enable iSCSI Service"
+          ansible.builtin.service:
+            name: iscsid
+            state: started
+            enabled: true
 
-    # --- 2. UPDATE HOMEPAGE CONFIG ---
-    - name: "Apply Homepage with All Lab Services"
-      shell: |
-        /usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config apply -f - <<EOF
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: homepage-config
-        data:
-          settings.yaml: |
-            title: "Ctrl Alt Ryan Lab"
-          services.yaml: |
-            - Infrastructure:
-                - Grafana:
-                    icon: grafana.png
-                    href: http://{{ controller_ip }}:32000
-                - Longhorn:
-                    icon: longhorn.png
-                    href: http://{{ controller_ip }}:{{ longhorn_nodeport }}
-            - Tools:
-                - Speedtest:
-                    icon: openspeedtest.png
-                    href: http://{{ controller_ip }}:31000
-        ---
-        apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: homepage
-        spec:
-          replicas: 1
-          selector:
-            matchLabels:
-              app: homepage
-          template:
-            metadata:
-              labels:
-                app: homepage
-            spec:
-              containers:
-              - name: homepage
-                image: ghcr.io/gethomepage/homepage:latest
-                env:
-                - name: HOMEPAGE_ALLOWED_HOSTS
-                  value: "10.3.160.101,10.3.160.101:30081,localhost,*"
-                volumeMounts:
-                - name: config
-                  mountPath: /app/config/settings.yaml
-                  subPath: settings.yaml
-                - name: config
-                  mountPath: /app/config/services.yaml
-                  subPath: services.yaml
-              volumes:
-              - name: config
-                configMap:
-                  name: homepage-config
-        EOF
-      run_once: true
-      delegate_to: k8s-controller-01
+        - name: "Format /dev/vda"
+          community.general.filesystem:
+            fstype: xfs
+            dev: /dev/vda
+            force: no
 
-    - name: "Bounce Homepage Pod"
-      shell: "/usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config delete pod -l app=homepage --force --grace-period=0"
-      run_once: true
-      delegate_to: k8s-controller-01
-      ignore_errors: true
+        - name: "Mount to Longhorn Path"
+          ansible.builtin.mount:
+            path: /var/lib/longhorn
+            src: /dev/vda
+            fstype: xfs
+            state: mounted
 
-    # --- 3. FINAL SUMMARY ---
-    - name: "Display Full Lab Access Info"
-      run_once: true
-      delegate_to: k8s-controller-01
-      debug:
-        msg:
-          - "-------------------------------------------------------"
-          - "SUCCESS: ALL SERVICES ARE LIVE"
-          - "-------------------------------------------------------"
-          - "MAIN DASHBOARD:  http://{{ controller_ip }}:30081"
-          - "GRAFANA:         http://{{ controller_ip }}:32000"
-          - "SPEEDTEST:       http://{{ controller_ip }}:31000"
-          - "LONGHORN UI:     http://{{ controller_ip }}:{{ longhorn_nodeport }}"
-          - "-------------------------------------------------------"
+    # --- STAGE 2: HELM & APPS ---
+    - name: "Deploy Helm Charts"
+      when: inventory_hostname == 'k8s-controller-01'
+      become: false
+      block:
+        - name: "Install Helm Binary"
+          ansible.builtin.shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          args:
+            creates: /usr/local/bin/helm
+
+        - name: "Add Repos"
+          kubernetes.core.helm_repository:
+            name: "{{ item.name }}"
+            repo_url: "{{ item.url }}"
+          loop:
+            - { name: 'longhorn', url: 'https://charts.longhorn.io' }
+            - { name: 'prometheus-community', url: 'https://prometheus-community.github.io/helm-charts' }
+
+        - name: "Create Namespaces"
+          kubernetes.core.k8s:
+            name: "{{ item }}"
+            kind: Namespace
+            state: present
+          loop: [longhorn-system, monitoring]
+
+        - name: "Install Longhorn (with NodePort 31802)"
+          kubernetes.core.helm:
+            name: longhorn
+            chart_ref: longhorn/longhorn
+            release_namespace: longhorn-system
+            values:
+              defaultSettings:
+                defaultDataPath: /var/lib/longhorn
+              service:
+                ui:
+                  type: NodePort
+                  nodePort: 31802
+
+        - name: "Install Monitoring (Password: admin)"
+          kubernetes.core.helm:
+            name: prometheus
+            chart_ref: prometheus-community/kube-prometheus-stack
+            release_namespace: monitoring
+            values:
+              grafana:
+                adminPassword: admin
+                service:
+                  type: NodePort
+                  nodePort: 32000
+
+        - name: "Deploy OpenSpeedTest"
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata: { name: openspeedtest, namespace: default }
+              spec:
+                replicas: 1
+                selector: { matchLabels: { app: openspeedtest } }
+                template:
+                  metadata: { labels: { app: openspeedtest } }
+                  spec:
+                    containers:
+                    - name: openspeedtest
+                      image: openspeedtest/latest
+                      ports: [{ containerPort: 3000 }]
+
+        - name: "Expose OpenSpeedTest (NodePort 31000)"
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Service
+              metadata: { name: openspeedtest-svc, namespace: default }
+              spec:
+                type: NodePort
+                selector: { app: openspeedtest }
+                ports: [{ port: 3000, targetPort: 3000, nodePort: 31000 }]
