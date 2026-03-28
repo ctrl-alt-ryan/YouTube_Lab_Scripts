@@ -92,3 +92,20 @@ Service	Access Link
 🚀 Main Dashboard	http://10.3.160.101
 📈 Grafana	http://10.3.160.101:32001
 ⚡ SpeedTest	http://10.3.160.101:30001
+
+
+⚙️ Post-Deployment: Connecting the Dots
+
+To finalize the observability pipeline, perform the following one-time configuration in the UI:
+
+    Access Grafana: Navigate to http://10.3.160.101:32001 (Default: admin / admin).
+
+    Add Data Source: Go to Connections > Data Sources > Add Prometheus.
+
+    Configure Connection:
+
+        URL: http://prometheus:9090  (Note: We use the Docker internal service name, not the IP, for intra-container communication).
+
+        Access: Server (default)
+
+    Save & Test: Once verified, import Dashboard ID: 1860 to instantly visualize the CPU, RAM, and Disk metrics across all three Kubernetes nodes.
