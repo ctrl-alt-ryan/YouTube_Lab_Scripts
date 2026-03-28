@@ -1,120 +1,94 @@
-🚀 Enterprise-Grade K8s Lab: From Consumer to Core
-The "Ctrl Alt Ryan" Infrastructure-as-Code (IaC) Deployment
+🚀 Enterprise-Grade Hybrid Lab: The "Ctrl Alt Ryan" IaC Deployment
 
-This repository documents the evolution of my homelab, transitioning from the lightweight K3s distribution to a fully-orchestrated, enterprise-grade Kubernetes (K8s) environment. This project utilizes a complete DevOps toolchain to automate the provisioning, configuration, and deployment of mission-critical lab services.
+This repository documents the evolution of a high-performance homelab, transitioning from basic virtualization to a Hybrid Orchestration environment. By separating the Management Plane (Docker) from the Compute Plane (Kubernetes), this architecture ensures 100% observability uptime even during heavy cluster maintenance.
 🏗️ The Tech Stack
 
-    Hypervisor: Proxmox VE (Dell XPS 4-Node Cluster
+    Hypervisor: Proxmox VE Cluster (Dell PowerEdge & XPS Nodes)
 
     Provisioning: Terraform (Infrastructure as Code)
 
     Configuration: Ansible (Immutable Server Setup)
 
-    Orchestration: Kubernetes (Vanilla K8s)
+    Orchestration: Vanilla Kubernetes (v1.30+)
 
-    Storage: Longhorn (Distributed Software-Defined Storage)
+    Management Plane: Docker & Docker Compose (High-Availability UI)
 
-    CI/CD: GitLab
+    Storage: Enterprise iSCSI (LUNs mapped via Proxmox to 50GB VirtIO Disks)
 
     Observability: Prometheus & Grafana (Dashboard 1860)
 
-🛠️ Deployment Phases
+🛠️ Deployment Architecture
 Phase 1: Infrastructure Provisioning (Terraform)
 
-Terraform interacts directly with the Proxmox API to spin up our cluster nodes with precise resource allocations:
+Terraform interacts with the Proxmox API to provision thin-provisioned nodes backed by a dedicated iSCSI SAN.
 
-    1x Controller Node: 2 vCPU | 4GB RAM | 32GB OS Disk
+    1x Controller Node: 2 vCPU | 4GB RAM | 60GB OS Disk (Expanded via iSCSI)
 
-    2x Worker Nodes: 2 vCPU | 4GB RAM | 20GB OS Disk + 50GB Dedicated VirtIO Disk (Reserved for Longhorn)
+    2x Worker Nodes: 2 vCPU | 4GB RAM | 60GB OS Disk
 
-Phase 2: System Hardening & Prep (Ansible)
+Phase 2: Hybrid Management Layer (Ansible + Docker)
 
-Before Kubernetes is initialized, Ansible performs "Day 0" configuration to ensure the base OS is ready for container orchestration:
+To solve the "Disk Pressure" issues common in small-scale K8s labs, this project utilizes a Hybrid Management Approach. Core services run in Docker on the Controller to ensure the "Command Center" stays alive if the K8s workers are under load.
 
-    Container Runtime: Installation and optimization of containerd.
+    Branded Dashboard: Custom HTML5/Nginx landing page for 0-latency navigation.
 
-    Kernel Tuning: Disabling swap and loading essential modules (overlay, br_netfilter).
+    Persistent Monitoring: Grafana and Prometheus utilize persistent Docker volumes to retain credentials and historical metric data across reboots.
 
-    Networking: Applying sysctl configurations for bridged traffic.
+Phase 3: Cluster Hardening (Ansible)
 
-    Storage Prep: Installing open-iscsi to support block storage attachment.
+Ansible performs "Day 0" configuration to prep the Ubuntu 24.04 base:
 
-Phase 3: Cluster Initialization
+    Container Runtime: Optimized containerd with SystemdCgroup enabled.
 
-Using the kubeadm workflow, we initialize the Control Plane and join the Worker nodes into a cohesive cluster, establishing the internal networking and API communication necessary for a multi-node environment.
+    Kernel Tuning: Loading overlay and br_netfilter; sysctl networking optimizations.
 
-Phase 4: Software-Defined Storage (Longhorn)
+    Lock Management: Automated handling of unattended-upgrades to prevent apt database collisions during deployment.
 
-To achieve high availability, we deploy Longhorn. This allows us to replicate data volumes across multiple worker nodes. If a node fails, Kubernetes automatically reschedules the pod to a healthy node, and Longhorn re-attaches the replicated data instantly—ensuring zero data loss.
 📦 Hosted Services
 
-The cluster hosts a suite of tools isolated via Kubernetes Namespaces and managed through Helm:
+The lab environment provides a suite of tools for real-time performance and health tracking:
 
-    Homepage: Our central command center for lab navigation and real-time resource monitoring.
+    Branded Landing Page: A custom-coded, dark-themed dashboard at http://<controller-ip> for instant access to lab tools.
 
-    Grafana: Deep-stack observability using the 1860 Node Exporter Full dashboard for per-core hardware metrics.
+    Grafana: Deep-stack observability using the 1860 Node Exporter Full dashboard, scraping real-time metrics from all 3 K8s nodes.
 
-    OpenSpeedTest: A localized network benchmarking tool to verify 1Gbps/10Gbps backbone throughput within the lab.
+    OpenSpeedTest: Localized network benchmarking to verify backbone throughput.
 
-----------------------------------------------------------------------------------------------------------------------------------
-----------------------------------------------------------------------------------------------------------------------------------
+    Prometheus: Centralized metric collection with custom scrape targets for the Kubernetes worker fleet.
 
-🚀 Quick Start Guide: Enterprise K8s on Proxmox
-
-This guide covers the automated deployment of a production-grade Kubernetes cluster onto a 4-node Dell XPS Proxmox cluster.
-📋 Prerequisites
-
-    Proxmox VE Cluster: 4 nodes (Dell XPS or similar) with a Linux Bridge (vmbr0) configured.
-
-    Control Machine: Linux/Unix environment with Terraform and Ansible installed.
-
-    SSH Access: Ensure your SSH public key is added to your Proxmox nodes.
-
-    
-🏗️ Phase 1: Infrastructure Provisioning (Terraform)
-
-We use Terraform to define the "Skeletal" structure of our VMs.
-
-    Navigate to the Terraform directory:
-    Bash
-
-    cd terraform/
-
-Configure your credentials:
-Edit the variables file with your Proxmox IP, your @pam or @pve username, and your password. 
-
-Deploy the VMs:
+🚀 Quick Start Guide
+1. Provision Infrastructure
 Bash
 
+cd terraform/
 terraform init
 terraform apply -auto-approve
 
-🔧 Phase 2: System Hardening (Ansible)
+2. Configure & Harden Nodes
 
-Now that the VMs are "alive," we need to prep the OS for a heavy Kubernetes workload.
+Ensure ansible/inventory.ini matches your new IPs (e.g., .101, .104, .105).
+Bash
 
-    Update your Inventory:
-    Ensure ansible/inventory.ini matches the IPs generated by Terraform.
+cd ansible/
+ansible-playbook -i inventory.ini deploy_k8s.yml
 
-    Run the Prep Playbook:
-    Bash
+3. Deploy Management & Monitoring
 
-    ansible-playbook -i inventory.ini k8s_prep.yml
+This script installs Docker, sets up the Node Exporters, and launches the Branded Dashboard.
+Bash
 
-    This handles: containerd install, Swap disable, br_netfilter modules, and open-iscsi for Longhorn.
+ansible-playbook -i inventory.ini deploy__apps.yml
 
-☸️ Phase 3: Cluster & App Deployment
+💡 Senior Engineering Lessons Learned
 
-The final step is turning those VMs into a functional cluster and deploying our lab services.
+    Storage Offloading: Transitioning from in-cluster Longhorn to Hypervisor-level iSCSI mapping significantly reduced CPU wait times and solved Kubelet "Disk Pressure" evictions.
 
-    Initialize K8s & Join Workers:
-    Bash
+    Atomic Deployments: Implementing apt lock-wait loops in Ansible ensures 100% success rates when deploying to freshly provisioned "Cloud-Init" images.
 
-    ansible-playbook -i inventory.ini deploy_cluster.yml
+    Decoupled Management: Running monitoring tools in a lightweight Docker stack on the controller prevents "Observability Blackouts" when the Kubernetes API is undergoing maintenance.
 
-    Deploy Services (Homepage, Grafana, Speedtest):
-    Bash
-
-    ansible-playbook -i inventory.ini deploy_apps.yml
-
-    
+🏁 Final Video Verification
+Service	Access Link
+🚀 Main Dashboard	http://10.3.160.101
+📈 Grafana	http://10.3.160.101:32001
+⚡ SpeedTest	http://10.3.160.101:30001
