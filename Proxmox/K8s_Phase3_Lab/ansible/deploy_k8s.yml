@@ -1,119 +1,108 @@
 ---
-- name: "Deploy All Lab Services and Monitoring"
+- name: "XPS Cluster: Automated Infrastructure Setup"
   hosts: k8s_cluster
   become: true
-  vars:
-    controller_ip: "{{ hostvars['k8s-controller-01']['ansible_host'] | default('10.3.160.101') }}"
+  any_errors_fatal: true
 
   tasks:
-    # --- 1. DISCOVER LONGHORN PORT ---
-    - name: "Get Actual Longhorn NodePort"
-      shell: "/usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config get svc longhorn-frontend -n longhorn-system -o jsonpath='{.spec.ports[0].nodePort}'"
-      register: longhorn_port_discovery
-      run_once: true
-      delegate_to: k8s-controller-01
-      changed_when: false
-
-    - name: "Set Longhorn Port Variable"
-      set_fact:
-        longhorn_nodeport: "{{ longhorn_port_discovery.stdout }}"
-      run_once: true
-
-    # --- 2. DEPLOY/UPDATE HOMEPAGE (ALL SERVICES) ---
-    - name: "Apply Homepage with All Lab Services"
-      shell: |
-        /usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config apply -f - <<EOF
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: homepage-config
-        data:
-          settings.yaml: |
-            title: "Ctrl Alt Ryan Lab"
-          services.yaml: |
-            - Infrastructure:
-                - Grafana:
-                    icon: grafana.png
-                    href: http://{{ controller_ip }}:32000
-                - Longhorn:
-                    icon: longhorn.png
-                    href: http://{{ controller_ip }}:{{ longhorn_nodeport }}
-            - Tools:
-                - Speedtest:
-                    icon: openspeedtest.png
-                    href: http://{{ controller_ip }}:31000
-        ---
-        apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: homepage
-        spec:
-          replicas: 1
-          selector:
-            matchLabels:
-              app: homepage
-          template:
-            metadata:
-              labels:
-                app: homepage
-            spec:
-              containers:
-              - name: homepage
-                image: ghcr.io/gethomepage/homepage:latest
-                env:
-                - name: HOMEPAGE_ALLOWED_HOSTS
-                  value: "10.3.160.101,10.3.160.101:30081,localhost,*"
-                volumeMounts:
-                - name: config
-                  mountPath: /app/config/settings.yaml
-                  subPath: settings.yaml
-                - name: config
-                  mountPath: /app/config/services.yaml
-                  subPath: services.yaml
-              volumes:
-              - name: config
-                configMap:
-                  name: homepage-config
-        ---
-        apiVersion: v1
-        kind: Service
-        metadata:
-          name: homepage-svc
-        spec:
-          type: NodePort
-          selector:
-            app: homepage
-          ports:
-          - port: 3000
-            targetPort: 3000
-            nodePort: 30081
-        EOF
-      run_once: true
-      delegate_to: k8s-controller-01
-
-    - name: "Bounce Homepage Pod to Apply Changes"
-      shell: "/usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config delete pod -l app=homepage --force --grace-period=0"
-      run_once: true
-      delegate_to: k8s-controller-01
+    # --- STAGE 0: NUCLEAR RESET ---
+    - name: "Force Release Port 6443 and Clean State"
+      ansible.builtin.shell: |
+        systemctl stop kubelet || true
+        kubeadm reset -f || true
+        fuser -k 6443/tcp || true
+        ip link delete cni0 || true
+        ip link delete flannel.1 || true
+        rm -rf /etc/cni/net.d /var/lib/etcd /var/lib/cni/ /home/xpsadmin/.kube
       ignore_errors: true
 
-    # --- 3. HEALTH CHECK ---
-    - name: "Wait for Homepage to be Ready"
-      shell: "/usr/bin/kubectl --kubeconfig /home/xpsadmin/.kube/config wait --for=condition=Ready pod -l app=homepage --timeout=60s"
-      run_once: true
-      delegate_to: k8s-controller-01
+    - name: "Restart Containerd"
+      ansible.builtin.service:
+        name: containerd
+        state: restarted
 
-    # --- 4. FINAL SUMMARY ---
-    - name: "Display Full Lab Access Info"
-      run_once: true
-      delegate_to: k8s-controller-01
-      debug:
-        msg:
-          - "-------------------------------------------------------"
-          - "SUCCESS: ALL SERVICES ARE LIVE"
-          - "-------------------------------------------------------"
-          - "MAIN DASHBOARD:  http://{{ controller_ip }}:30081"
-          - "GRAFANA:         http://{{ controller_ip }}:32000"
-          - "SPEEDTEST:       http://{{ controller_ip }}:31000"
-          - "LONGHORN UI:     http://{{ controller_ip }}:{{ longhorn_nodeport }}"
-          - "-------------------------------------------------------"
+    # --- STAGE 1: OS PREP ---
+    - name: "Kernel & Swap Prep"
+      ansible.builtin.shell: |
+        swapoff -a
+        sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+        modprobe overlay
+        modprobe br_netfilter
+
+    - name: "Configure Sysctl"
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+      loop:
+        - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { key: 'net.ipv4.ip_forward', value: '1' }
+
+    # --- STAGE 2: INSTALLATION ---
+    - name: "Install Containerd & Base Tools"
+      ansible.builtin.apt:
+        name: [containerd, apt-transport-https, ca-certificates, curl, gpg, python3-kubernetes]
+        state: present
+        update_cache: yes
+
+    - name: "Configure Containerd (SystemdCgroup)"
+      ansible.builtin.shell: |
+        mkdir -p /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+      notify: Restart Containerd
+
+    - name: "Add K8s Repo & Install"
+      ansible.builtin.shell: |
+        mkdir -p -m 755 /etc/apt/keyrings
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+        apt-get update
+        apt-get install -y kubelet kubeadm kubectl
+        apt-mark hold kubelet kubeadm kubectl
+
+    # --- STAGE 3: CONTROLLER INIT & PERMISSIONS ---
+    - name: "Initialize Control Plane"
+      when: inventory_hostname == 'k8s-controller-01'
+      block:
+        - name: "Kubeadm Init (Overwriting existing locks)"
+          ansible.builtin.shell: kubeadm init --pod-network-cidr=10.244.0.0/16 --apiserver-advertise-address=10.3.160.101 --ignore-preflight-errors=Port-6443
+
+        - name: "Setup Kubeconfig Permissions"
+          ansible.builtin.file:
+            path: "/home/xpsadmin/.kube"
+            state: directory
+            owner: xpsadmin
+            group: xpsadmin
+            mode: '0755'
+
+        - name: "Copy and Own Admin Config"
+          ansible.builtin.copy:
+            src: /etc/kubernetes/admin.conf
+            dest: /home/xpsadmin/.kube/config
+            remote_src: yes
+            owner: xpsadmin
+            group: xpsadmin
+            mode: '0600'
+
+        - name: "Install Flannel CNI"
+          become: false
+          ansible.builtin.shell: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+
+        - name: "Capture Join Command"
+          ansible.builtin.shell: kubeadm token create --print-join-command
+          register: join_command_raw
+
+    # --- STAGE 4: THE AUTOMATED JOIN ---
+    - name: "Join Workers to Cluster"
+      when: "'worker' in inventory_hostname"
+      ansible.builtin.shell: "{{ hostvars['k8s-controller-01']['join_command_raw']['stdout'] }}"
+      register: join_result
+      failed_when: "join_result.rc != 0 and 'already exists' not in join_result.stderr"
+
+  handlers:
+    - name: Restart Containerd
+      ansible.builtin.service:
+        name: containerd
+        state: restarted
