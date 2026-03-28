@@ -1,114 +1,129 @@
 ---
-- name: "XPS Cluster: Storage & Apps Deployment"
+- name: "XPS Cluster: Master Deploy & Branded Dashboard"
   hosts: k8s_cluster
   become: true
-  any_errors_fatal: true
 
   tasks:
-    # --- STAGE 1: STORAGE PREP ---
-    - name: "Prepare 50GB Data Drives"
-      when: "'worker' in inventory_hostname"
-      block:
-        - name: "Install Longhorn Prereqs"
-          ansible.builtin.apt:
-            name: [open-iscsi, nfs-common, jq]
-            state: present
+    # --- STAGE 0: APT SAFETY (The "Unattended Upgrades" Killer) ---
+    - name: "Wait for apt lock to be released"
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for other apt instance to finish..."
+          sleep 5
+        done
+      register: lock_wait
+      changed_when: false
 
-        - name: "Enable iSCSI Service"
-          ansible.builtin.service:
-            name: iscsid
-            state: started
-            enabled: true
+    # --- STAGE 1: NODE EXPORTER (Metrics) ---
+    - name: "Install Node Exporter on All Nodes"
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        update_cache: yes
 
-        - name: "Format /dev/vda"
-          community.general.filesystem:
-            fstype: xfs
-            dev: /dev/vda
-            force: no
-
-        - name: "Mount to Longhorn Path"
-          ansible.builtin.mount:
-            path: /var/lib/longhorn
-            src: /dev/vda
-            fstype: xfs
-            state: mounted
-
-    # --- STAGE 2: HELM & APPS ---
-    - name: "Deploy Helm Charts"
+    # --- STAGE 2: DOCKER & DASHBOARD (Controller Only) ---
+    - name: "Setup Management Layer"
       when: inventory_hostname == 'k8s-controller-01'
-      become: false
       block:
-        - name: "Install Helm Binary"
-          ansible.builtin.shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          args:
-            creates: /usr/local/bin/helm
-
-        - name: "Add Repos"
-          kubernetes.core.helm_repository:
-            name: "{{ item.name }}"
-            repo_url: "{{ item.url }}"
-          loop:
-            - { name: 'longhorn', url: 'https://charts.longhorn.io' }
-            - { name: 'prometheus-community', url: 'https://prometheus-community.github.io/helm-charts' }
-
-        - name: "Create Namespaces"
-          kubernetes.core.k8s:
-            name: "{{ item }}"
-            kind: Namespace
+        - name: "Install Docker and Compose"
+          ansible.builtin.apt:
+            name: [docker.io, docker-compose-v2]
             state: present
-          loop: [longhorn-system, monitoring]
 
-        - name: "Install Longhorn (with NodePort 31802)"
-          kubernetes.core.helm:
-            name: longhorn
-            chart_ref: longhorn/longhorn
-            release_namespace: longhorn-system
-            values:
-              defaultSettings:
-                defaultDataPath: /var/lib/longhorn
-              service:
-                ui:
-                  type: NodePort
-                  nodePort: 31802
+        - name: "Create App Directory"
+          ansible.builtin.file:
+            path: "/home/xpsadmin/mgmt-stack/config"
+            state: directory
+            owner: xpsadmin
+            group: xpsadmin
+            mode: '0755'
 
-        - name: "Install Monitoring (Password: admin)"
-          kubernetes.core.helm:
-            name: prometheus
-            chart_ref: prometheus-community/kube-prometheus-stack
-            release_namespace: monitoring
-            values:
-              grafana:
-                adminPassword: admin
-                service:
-                  type: NodePort
-                  nodePort: 32000
+        - name: "Generate Prometheus Config"
+          ansible.builtin.copy:
+            dest: "/home/xpsadmin/mgmt-stack/config/prometheus.yml"
+            content: |
+              global:
+                scrape_interval: 15s
+              scrape_configs:
+                - job_name: 'k8s-nodes'
+                  static_configs:
+                    - targets: ['10.3.160.101:9100', '10.3.160.104:9100', '10.3.160.105:9100']
 
-        - name: "Deploy OpenSpeedTest"
-          kubernetes.core.k8s:
-            state: present
-            definition:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata: { name: openspeedtest, namespace: default }
-              spec:
-                replicas: 1
-                selector: { matchLabels: { app: openspeedtest } }
-                template:
-                  metadata: { labels: { app: openspeedtest } }
-                  spec:
-                    containers:
-                    - name: openspeedtest
-                      image: openspeedtest/latest
-                      ports: [{ containerPort: 3000 }]
+        - name: "Generate Branded Video Dashboard (UTF-8 Safe)"
+          ansible.builtin.copy:
+            dest: "/home/xpsadmin/mgmt-stack/index.html"
+            owner: xpsadmin
+            group: xpsadmin
+            content: |
+              <!DOCTYPE html>
+              <html lang="en">
+              <head>
+                  <meta charset="UTF-8">
+                  <title>Ctrl Alt Ryan | Lab</title>
+                  <style>
+                      body { background: #0d1117; color: #c9d1d9; font-family: sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                      h1 { margin-bottom: 30px; color: #58a6ff; letter-spacing: 2px; text-transform: uppercase; }
+                      .grid { display: grid; grid-template-columns: repeat(3, 220px); gap: 25px; }
+                      .card { background: #161b22; padding: 40px 20px; border-radius: 12px; text-align: center; text-decoration: none; color: #f0f6fc; transition: 0.2s; border: 1px solid #30363d; }
+                      .card:hover { border-color: #58a6ff; transform: translateY(-5px); background: #1c2128; box-shadow: 0 8px 20px rgba(88,166,255,0.2); }
+                      .icon { font-size: 40px; margin-bottom: 15px; display: block; }
+                      .status { font-size: 0.8rem; color: #3fb950; margin-top: 10px; display: block; }
+                  </style>
+              </head>
+              <body>
+                  <h1>CTRL ALT RYAN LAB</h1>
+                  <div class="grid">
+                      <a href="http://10.3.160.101:32001" class="card"><span class="icon">&#x1F4C8;</span><h2>Grafana</h2><span class="status">&#x25CF; Monitoring Active</span></a>
+                      <a href="http://10.3.160.101:30001" class="card"><span class="icon">&#x26A1;</span><h2>SpeedTest</h2><span class="status">&#x25CF; Network Ready</span></a>
+                      <a href="http://10.3.160.101:9090" class="card"><span class="icon">&#x1F525;</span><h2>Prometheus</h2><span class="status">&#x25CF; 3 Nodes Scraped</span></a>
+                  </div>
+              </body>
+              </html>
 
-        - name: "Expose OpenSpeedTest (NodePort 31000)"
-          kubernetes.core.k8s:
-            state: present
-            definition:
-              apiVersion: v1
-              kind: Service
-              metadata: { name: openspeedtest-svc, namespace: default }
-              spec:
-                type: NodePort
-                selector: { app: openspeedtest }
-                ports: [{ port: 3000, targetPort: 3000, nodePort: 31000 }]
+        - name: "Deploy Docker Stack"
+          ansible.builtin.copy:
+            dest: "/home/xpsadmin/mgmt-stack/docker-compose.yml"
+            content: |
+              services:
+                dashboard:
+                  image: nginx:latest
+                  container_name: video-dash
+                  restart: always
+                  ports: ["80:80"]
+                  volumes: ["./index.html:/usr/share/nginx/html/index.html:ro"]
+                speedtest:
+                  image: openspeedtest/latest
+                  container_name: speedtest
+                  restart: always
+                  ports: ["30001:3000"]
+                prometheus:
+                  image: prom/prometheus:latest
+                  container_name: prometheus
+                  restart: always
+                  volumes: ["./config/prometheus.yml:/etc/prometheus/prometheus.yml"]
+                  ports: ["9090:9090"]
+                grafana:
+                  image: grafana/grafana:latest
+                  container_name: grafana
+                  restart: always
+                  ports: ["32001:3000"]
+                  environment: [GF_SECURITY_ADMIN_PASSWORD=admin]
+
+        - name: "Start Docker Stack"
+          ansible.builtin.shell:
+            cmd: "docker compose up -d --force-recreate"
+            chdir: "/home/xpsadmin/mgmt-stack"
+
+    # --- STAGE 3: THE VICTORY LAP ---
+    - name: "Final Video URLs"
+      when: inventory_hostname == 'k8s-controller-01'
+      ansible.builtin.debug:
+        msg:
+          - "------------------------------------------------------"
+          - "✅ LAB DEPLOYED! THE CAMERA IS WAITING:"
+          - "------------------------------------------------------"
+          - "MAIN DASHBOARD: http://10.3.160.101"
+          - "GRAFANA:        http://10.3.160.101:32001"
+          - "SPEEDTEST:      http://10.3.160.101:30001"
+          - "PROMETHEUS:     http://10.3.160.101:9090"
+          - "------------------------------------------------------"
