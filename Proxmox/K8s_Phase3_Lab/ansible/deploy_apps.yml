@@ -120,7 +120,7 @@
       ansible.builtin.debug:
         msg:
           - "------------------------------------------------------"
-          - "✅ LAB DEPLOYED! THE CAMERA IS WAITING:"
+          - "✅ LAB DEPLOYED!:"
           - "------------------------------------------------------"
           - "MAIN DASHBOARD: http://10.3.160.101"
           - "GRAFANA:        http://10.3.160.101:32001"
