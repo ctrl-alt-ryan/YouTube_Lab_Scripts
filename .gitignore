@@ -1,0 +1,4 @@
+kubeconfig
+talosconfig
+*.txt
+*.kate-swp
