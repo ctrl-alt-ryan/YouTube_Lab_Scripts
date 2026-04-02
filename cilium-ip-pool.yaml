@@ -1,0 +1,17 @@
+apiVersion: "cilium.io/v2alpha1"
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: "xps-talos-ip-pool"
+spec:
+  blocks:
+    - start: "10.3.150.210" # Adjust these to IPs not used by your laptops
+      stop: "10.3.150.240"
+---
+apiVersion: "cilium.io/v2alpha1"
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: "xps-talos-ip-policy"
+spec:
+  # This tells all nodes to 'shout' for these IPs on the network
+  loadBalancerIPs: true
+  externalIPs: true
