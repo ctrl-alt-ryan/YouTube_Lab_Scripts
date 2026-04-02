@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-test-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: storage-checker
+spec:
+  containers:
+  - name: nfs-tester
+    image: busybox
+    command: ["/bin/sh", "-c", "echo 'Ctrl Alt Ryan was here' > /mnt/success.txt && sleep 3600"]
+    volumeMounts:
+    - name: nfs-storage
+      mountPath: /mnt
+  volumes:
+  - name: nfs-storage
+    persistentVolumeClaim:
+      claimName: synology-test-pvc
