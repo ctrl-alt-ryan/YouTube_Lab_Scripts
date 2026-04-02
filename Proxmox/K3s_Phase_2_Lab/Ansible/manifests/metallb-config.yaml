@@ -1,0 +1,14 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: main-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 10.3.200.150-10.3.200.160
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: main-adv
+  namespace: metallb-system

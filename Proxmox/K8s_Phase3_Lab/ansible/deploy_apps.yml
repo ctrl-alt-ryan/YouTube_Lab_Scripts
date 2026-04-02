@@ -1,0 +1,129 @@
+---
+- name: "XPS Cluster: Master Deploy & Branded Dashboard"
+  hosts: k8s_cluster
+  become: true
+
+  tasks:
+    # --- STAGE 0: APT SAFETY (The "Unattended Upgrades" Killer) ---
+    - name: "Wait for apt lock to be released"
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for other apt instance to finish..."
+          sleep 5
+        done
+      register: lock_wait
+      changed_when: false
+
+    # --- STAGE 1: NODE EXPORTER (Metrics) ---
+    - name: "Install Node Exporter on All Nodes"
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        update_cache: yes
+
+    # --- STAGE 2: DOCKER & DASHBOARD (Controller Only) ---
+    - name: "Setup Management Layer"
+      when: inventory_hostname == 'k8s-controller-01'
+      block:
+        - name: "Install Docker and Compose"
+          ansible.builtin.apt:
+            name: [docker.io, docker-compose-v2]
+            state: present
+
+        - name: "Create App Directory"
+          ansible.builtin.file:
+            path: "/home/xpsadmin/mgmt-stack/config"
+            state: directory
+            owner: xpsadmin
+            group: xpsadmin
+            mode: '0755'
+
+        - name: "Generate Prometheus Config"
+          ansible.builtin.copy:
+            dest: "/home/xpsadmin/mgmt-stack/config/prometheus.yml"
+            content: |
+              global:
+                scrape_interval: 15s
+              scrape_configs:
+                - job_name: 'k8s-nodes'
+                  static_configs:
+                    - targets: ['10.3.160.101:9100', '10.3.160.104:9100', '10.3.160.105:9100']
+
+        - name: "Generate Branded Video Dashboard (UTF-8 Safe)"
+          ansible.builtin.copy:
+            dest: "/home/xpsadmin/mgmt-stack/index.html"
+            owner: xpsadmin
+            group: xpsadmin
+            content: |
+              <!DOCTYPE html>
+              <html lang="en">
+              <head>
+                  <meta charset="UTF-8">
+                  <title>Ctrl Alt Ryan | Lab</title>
+                  <style>
+                      body { background: #0d1117; color: #c9d1d9; font-family: sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                      h1 { margin-bottom: 30px; color: #58a6ff; letter-spacing: 2px; text-transform: uppercase; }
+                      .grid { display: grid; grid-template-columns: repeat(3, 220px); gap: 25px; }
+                      .card { background: #161b22; padding: 40px 20px; border-radius: 12px; text-align: center; text-decoration: none; color: #f0f6fc; transition: 0.2s; border: 1px solid #30363d; }
+                      .card:hover { border-color: #58a6ff; transform: translateY(-5px); background: #1c2128; box-shadow: 0 8px 20px rgba(88,166,255,0.2); }
+                      .icon { font-size: 40px; margin-bottom: 15px; display: block; }
+                      .status { font-size: 0.8rem; color: #3fb950; margin-top: 10px; display: block; }
+                  </style>
+              </head>
+              <body>
+                  <h1>CTRL ALT RYAN LAB</h1>
+                  <div class="grid">
+                      <a href="http://10.3.160.101:32001" class="card"><span class="icon">&#x1F4C8;</span><h2>Grafana</h2><span class="status">&#x25CF; Monitoring Active</span></a>
+                      <a href="http://10.3.160.101:30001" class="card"><span class="icon">&#x26A1;</span><h2>SpeedTest</h2><span class="status">&#x25CF; Network Ready</span></a>
+                      <a href="http://10.3.160.101:9090" class="card"><span class="icon">&#x1F525;</span><h2>Prometheus</h2><span class="status">&#x25CF; 3 Nodes Scraped</span></a>
+                  </div>
+              </body>
+              </html>
+
+        - name: "Deploy Docker Stack"
+          ansible.builtin.copy:
+            dest: "/home/xpsadmin/mgmt-stack/docker-compose.yml"
+            content: |
+              services:
+                dashboard:
+                  image: nginx:latest
+                  container_name: video-dash
+                  restart: always
+                  ports: ["80:80"]
+                  volumes: ["./index.html:/usr/share/nginx/html/index.html:ro"]
+                speedtest:
+                  image: openspeedtest/latest
+                  container_name: speedtest
+                  restart: always
+                  ports: ["30001:3000"]
+                prometheus:
+                  image: prom/prometheus:latest
+                  container_name: prometheus
+                  restart: always
+                  volumes: ["./config/prometheus.yml:/etc/prometheus/prometheus.yml"]
+                  ports: ["9090:9090"]
+                grafana:
+                  image: grafana/grafana:latest
+                  container_name: grafana
+                  restart: always
+                  ports: ["32001:3000"]
+                  environment: [GF_SECURITY_ADMIN_PASSWORD=admin]
+
+        - name: "Start Docker Stack"
+          ansible.builtin.shell:
+            cmd: "docker compose up -d --force-recreate"
+            chdir: "/home/xpsadmin/mgmt-stack"
+
+    # --- STAGE 3: THE VICTORY LAP ---
+    - name: "Final Video URLs"
+      when: inventory_hostname == 'k8s-controller-01'
+      ansible.builtin.debug:
+        msg:
+          - "------------------------------------------------------"
+          - "✅ LAB DEPLOYED!:"
+          - "------------------------------------------------------"
+          - "MAIN DASHBOARD: http://10.3.160.101"
+          - "GRAFANA:        http://10.3.160.101:32001"
+          - "SPEEDTEST:      http://10.3.160.101:30001"
+          - "PROMETHEUS:     http://10.3.160.101:9090"
+          - "------------------------------------------------------"

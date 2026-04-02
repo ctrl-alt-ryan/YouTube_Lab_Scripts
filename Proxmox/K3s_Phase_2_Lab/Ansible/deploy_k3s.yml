@@ -1,0 +1,94 @@
+---
+- name: Prepare Nodes
+  hosts: all
+  become: true
+  tasks:
+    - name: Disable Swap
+      command: swapoff -a
+    - name: Remove Swap from fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+.*)$'
+        replace: '# \1'
+
+- name: Initialize First Control Node
+  hosts: k3s-ctlr-01
+  become: true
+  tasks:
+    - name: Install K3s on First Master (Init)
+      shell: >
+        curl -sfL https://get.k3s.io | K3S_TOKEN=my-shared-secret sh -s - server
+        --cluster-init
+        --tls-san 10.3.160.100
+        --disable servicelb
+
+- name: Join Remaining Control Nodes
+  hosts: controllers:!k3s-ctlr-01  # This syntax means "all controllers EXCEPT ctlr-01"
+  become: true
+  tasks:
+    - name: Join Secondary Masters
+      shell: >
+        curl -sfL https://get.k3s.io | K3S_TOKEN=my-shared-secret sh -s - server
+        --server https://10.3.160.101:6443
+        --disable servicelb
+      # NOTE: Ensure 10.3.160.51 is the actual IP of ctlr-01
+
+- name: Join Worker Nodes
+  hosts: workers
+  become: true
+  tasks:
+    - name: Join Workers to Cluster
+      shell: >
+        curl -sfL https://get.k3s.io | K3S_URL=https://10.3.160.101:6443
+        K3S_TOKEN=my-shared-secret sh -
+
+- name: Configure Kube-VIP for HA
+  hosts: k3s-ctlr-01
+  become: true
+  vars:
+    vip_address: 10.3.160.100
+    interface: eth0
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tasks:
+    - name: Apply Kube-VIP RBAC
+      command: kubectl apply -f https://kube-vip.io/manifests/rbac.yaml
+
+    - name: Pull Kube-VIP image into K3s namespace
+      command: k3s ctr images pull ghcr.io/kube-vip/kube-vip:main
+
+    - name: Generate and Apply Kube-VIP DaemonSet
+      shell: >
+        k3s ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:main vip-gen
+        /kube-vip manifest daemonset
+        --address {{ vip_address }}
+        --inCluster
+        --taint
+        --controlplane
+        --services
+        --arp
+        --leaderElection
+        --enableLoadBalancer
+        --interface {{ interface }} | kubectl apply -f -
+
+- name: Post-Install Configurations
+  hosts: k3s-ctlr-01
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tasks:
+    - name: Install MetalLB Manifest
+      command: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.5/config/manifests/metallb-native.yaml
+
+    - name: Wait for MetalLB Controller to be ready
+      pause:
+        seconds: 45
+
+    - name: Copy MetalLB Config to Master
+      copy:
+        src: manifests/metallb-config.yaml  # This is the path on your Fedora machine
+        dest: /tmp/metallb-config.yaml     # This is where it goes on the VM
+        mode: '0644'
+
+    - name: Apply MetalLB Config
+      command: kubectl apply -f /tmp/metallb-config.yaml

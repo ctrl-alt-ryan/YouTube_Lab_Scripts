@@ -1,0 +1,131 @@
+---
+- name: "XPS Cluster: Automated Infrastructure Setup"
+  hosts: k8s_cluster
+  become: true
+  any_errors_fatal: true
+
+  tasks:
+    - name: "Step 1: Kernel Modules & Networking"
+      block:
+        - name: "Load required modules"
+          community.general.modprobe:
+            name: "{{ item }}"
+            state: present
+          loop: [overlay, br_netfilter]
+
+        - name: "Configure sysctl for K8s networking"
+          ansible.posix.sysctl:
+            name: "{{ item.key }}"
+            value: "{{ item.value }}"
+            state: present
+          loop:
+            - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+            - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+            - { key: 'net.ipv4.ip_forward', value: '1' }
+
+    - name: "Step 2: Install Containerd Runtime"
+      block:
+        - name: "Install containerd"
+          ansible.builtin.apt:
+            name: containerd
+            state: present
+            update_cache: yes
+
+        - name: "Create containerd config directory"
+          ansible.builtin.file:
+            path: /etc/containerd
+            state: directory
+
+        - name: "Generate default containerd config"
+          ansible.builtin.shell: containerd config default > /etc/containerd/config.toml
+          args:
+            creates: /etc/containerd/config.toml
+
+        - name: "Set SystemdCgroup to true"
+          ansible.builtin.replace:
+            path: /etc/containerd/config.toml
+            regexp: 'SystemdCgroup = false'
+            replace: 'SystemdCgroup = true'
+
+        - name: "Restart containerd"
+          ansible.builtin.service:
+            name: containerd
+            state: restarted
+            enabled: yes
+
+    - name: "Step 3: Install K8s Components"
+      block:
+        - name: "Add Kubernetes Signing Key"
+          ansible.builtin.apt_key:
+            url: https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key
+            state: present
+
+        - name: "Add Kubernetes Repository"
+          ansible.builtin.apt_repository:
+            repo: deb https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /
+            state: present
+
+        - name: "Install Kubelet, Kubeadm, Kubectl, and Python-PIP"
+          ansible.builtin.apt:
+            name: [kubelet, kubeadm, kubectl, python3-pip]
+            state: present
+            update_cache: yes
+
+        - name: "Hold K8s packages"
+          ansible.builtin.dpkg_selections:
+            name: "{{ item }}"
+            selection: hold
+          loop: [kubelet, kubeadm, kubectl]
+
+    - name: "Step 4: Initialize Cluster (Controller Only)"
+      when: inventory_hostname == 'k8s-controller-01'
+      block:
+        - name: "Check if cluster is initialized"
+          ansible.builtin.stat:
+            path: /etc/kubernetes/admin.conf
+          register: kube_init
+
+        - name: "Kubeadm Init"
+          ansible.builtin.command: >
+            kubeadm init
+            --pod-network-cidr=10.244.0.0/16
+            --apiserver-advertise-address=10.3.160.101
+          when: not kube_init.stat.exists
+
+        - name: "Setup Kubeconfig for xpsadmin"
+          ansible.builtin.file:
+            path: "/home/xpsadmin/.kube"
+            state: directory
+            owner: xpsadmin
+            group: xpsadmin
+
+        - name: "Copy admin.conf to user home"
+          ansible.builtin.copy:
+            src: /etc/kubernetes/admin.conf
+            dest: "/home/xpsadmin/.kube/config"
+            remote_src: yes
+            owner: xpsadmin
+            group: xpsadmin
+
+        - name: "Install Python K8s Library"
+          ansible.builtin.pip:
+            name: kubernetes
+            extra_args: --break-system-packages
+          become: true
+
+        - name: "Install Flannel Network Plugin"
+          become: false
+          kubernetes.core.k8s:
+            src: "https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
+            state: present
+
+    - name: "Step 5: Generate Join Token (Controller Only)"
+      when: inventory_hostname == 'k8s-controller-01'
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_command
+
+    - name: "Step 6: Join Workers to Cluster"
+      when: "'worker' in inventory_hostname"
+      ansible.builtin.command: "{{ hostvars['k8s-controller-01']['join_command'].stdout }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf

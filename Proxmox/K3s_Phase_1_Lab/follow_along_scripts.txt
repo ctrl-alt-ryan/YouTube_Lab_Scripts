@@ -1,0 +1,117 @@
+============================================================
+PHASE 1: RV DATACENTER - K3S & MONITORING BUILD SCRIPTS
+============================================================
+
+I. THE FOUNDATION: VM/SERVER PREP
+------------------------------------------------------------
+OS: Ubuntu Server LTS (optimized for Proxmox templates)
+Specs: 2 vCPU, 4GB RAM, 20GB Disk
+Note: Static IPs are mandatory for cluster stability.
+
+# 1. Install QEMU Guest Agent (For Proxmox visibility/management)
+sudo apt update && sudo apt install -y qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+
+# 2. Disable Swap (Kubernetes requirement)
+sudo swapoff -a
+sudo sed -i '/swap/s/^/#/' /etc/fstab
+
+# 3. Clean up Machine IDs (Required if cloning this VM for a template)
+sudo truncate -s 0 /etc/machine-id
+sudo rm /var/lib/dbus/machine-id
+sudo ln -s /etc/machine-id /var/lib/dbus/machine-id
+
+# 4. Final Cleanup
+sudo history -c && history -w
+
+# SHUTDOWN VM -> CONVERT TO TEMPLATE IN PROXMOX
+# Use Cloud-Init to deploy 1x Controller and 2x Workers.
+# If Cloud-Init issues occur, run: sudo cloud-init clean --reboot
+
+
+II. KUBERNETES DEPLOYMENT (K3S)
+------------------------------------------------------------
+
+[ NODE 1: THE CONTROL PLANE ]
+# We disable ServiceLB to use MetalLB later.
+curl -sfL https://get.k3s.io | sh -s - server \
+  --write-kubeconfig-mode 644 \
+  --disable servicelb
+
+# Get your Join Token (Copy this for the workers)
+sudo cat /var/lib/rancher/k3s/server/node-token
+
+
+[ NODES 2 & 3: THE WORKERS ]
+# Replace [MASTER-IP] and [TOKEN] with your specific data.
+curl -sfL https://get.k3s.io | K3S_URL=https://[MASTER-IP]:6443 \
+K3S_TOKEN=[YOUR-TOKEN-HERE] sh -
+
+
+[ LOCAL MANAGEMENT: YOUR WORKSTATION ]
+# Setup kubectl locally to manage the cluster from your desk.
+mkdir -p ~/.kube
+scp [USER]@[MASTER-IP]:/etc/rancher/k3s/k3s.yaml ~/.kube/config
+
+# Update the config to point to the Master IP instead of 127.0.0.1
+# Use this for Linux:
+sed -i 's/127.0.0.1/[MASTER-IP]/g' ~/.kube/config
+# Or this for macOS:
+sed -i.bak 's/127.0.0.1/[MASTER-IP]/g' ~/.kube/config
+
+
+III. NETWORK ORCHESTRATION (METALLB)
+------------------------------------------------------------
+
+# 1. Install MetalLB
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.5/config/manifests/metallb-native.yaml
+
+# 2. Wait ~60 seconds for the webhook to initialize, then apply config.
+cat <<EOF > metallb-config.yaml
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: main-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 10.3.200.150-10.3.200.160 # Adjust for your network range
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: main-adv
+  namespace: metallb-system
+EOF
+
+kubectl apply -f metallb-config.yaml
+
+
+IV. DEPLOYING THE MONITORING STACK
+------------------------------------------------------------
+
+# 1. Install Helm (if not already on your workstation)
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# 2. Add Repos
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+# 3. Deploy Stack
+kubectl create namespace monitoring
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --set grafana.adminPassword=admin \
+  --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+
+# 4. Expose Grafana to the network via MetalLB
+kubectl patch svc monitoring-grafana -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
+
+
+VERIFICATION COMMANDS
+------------------------------------------------------------
+kubectl get nodes
+kubectl cluster-info
+helm list -A
+kubectl get svc -n monitoring

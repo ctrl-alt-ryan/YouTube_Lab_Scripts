@@ -1,0 +1,40 @@
+🛠️ Prerequisites & Hardware Requirements
+
+Before running the follow_along_scripts.txt, ensure your environment meets these specifications.
+1. Hardware (Minimum Recommendation)
+
+To run the full kube-prometheus-stack, your nodes need enough "headroom" for the Prometheus database and Grafana UI.
+
+    3x Virtual Machines (or Physical Nodes):
+
+        CPU: 2 Cores per node.
+
+        RAM: 4GB per node (Prometheus is memory-intensive).
+
+        Storage: 20GB+ SSD space.
+
+    Host: A Proxmox VE (or similar) environment with a bridge network configured.
+
+2. Network Configuration
+
+    Subnet: A dedicated range for your lab (e.g., 10.3.200.0/24).
+
+    Static IPs: Reserved IPs for your 3 nodes.
+
+    MetalLB Range: A small block of unused IPs (e.g., .150 to .160) that are outside your DHCP pool but inside your subnet.
+
+3. Software & Tools
+
+    OS: Ubuntu 22.04/24.04 LTS or Fedora Server.
+
+    Workstation: A laptop/PC with ssh and curl installed.
+
+    Access: SSH key-pair generated on your workstation for passwordless access to the nodes.
+
+💡 Why this setup?
+
+    QEMU Guest Agent: Without this, Proxmox cannot gracefully shut down your VMs or report their IP addresses accurately in the GUI.
+
+    No Swap: Kubernetes' scheduler expects to have total control over memory allocation. If the OS starts swapping to disk, performance becomes unpredictable, and K3s may fail to start.
+
+    Cloud-Init: We use this to inject your SSH keys and network config automatically. It’s the first step toward the "Infrastructure as Code" goal we mention in the video.
