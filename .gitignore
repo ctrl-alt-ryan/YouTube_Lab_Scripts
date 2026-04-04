@@ -1,7 +1,7 @@
 # --- Talos Specific ---
-# NEVER commit the raw secrets file
+# raw secrets file
 secrets.yaml
-# Talos config files often contain sensitive endpoint info and OIDC secrets
+# Talos config files
 talosconfig
 
 # Backup files generated during upgrades
