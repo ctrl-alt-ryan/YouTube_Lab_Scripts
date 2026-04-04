@@ -1,4 +1,33 @@
-kubeconfig
+# --- Talos Specific ---
+# NEVER commit the raw secrets file
+secrets.yaml
+# Talos config files often contain sensitive endpoint info and OIDC secrets
 talosconfig
+
+# Backup files generated during upgrades
+*.bak
+*.old
+
+# --- Kubernetes & Cloud ---
+kubeconfig
+
+# Cloud provider credentials (AWS/Azure/GCP)
+.aws/
+.azure/
+*.jks
+*.p12
+*.pem
+
+# --- Terraform (If you're using it for the Nodes) ---
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# --- Editor & OS Junk ---
 *.txt
 *.kate-swp
+.DS_Store
+.idea/
+.vscode/
+*.log
