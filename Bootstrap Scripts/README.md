@@ -1,6 +1,5 @@
 # 🚀 Ctrl Alt Ryan: Fedora 43 Bootstrap & Cloud Engineering Lab
 
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Platform: Fedora 43](https://img.shields.io/badge/Platform-Fedora%2043%20KDE-blue)
 
 Welcome to the official workstation bootstrap for the **Ctrl Alt Ryan** brand. This automation is designed to take a fresh installation of **Fedora 43 (KDE Plasma)** and transform it into a professional Infrastructure-as-Code (IaC) and Cloud Engineering powerhouse with a sleek, macOS-inspired "WhiteSur" aesthetic.
