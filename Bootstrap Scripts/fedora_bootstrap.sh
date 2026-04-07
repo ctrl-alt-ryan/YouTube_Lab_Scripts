@@ -57,7 +57,6 @@ flatpak install -y flathub \
 
 # --- 4. THE WHITESUR "AESTHETIC" CLONE ---
 echo "--- Step 4: Git Cloning WhiteSur Suite ---"
-# Clean up any old build folders to prevent 'destination path already exists' errors
 rm -rf ~/Downloads/build
 mkdir -p ~/Downloads/build && cd ~/Downloads/build
 
@@ -73,8 +72,13 @@ cd WhiteSur-icon-theme && ./install.sh && cd ..
 git clone https://github.com/vinceliuice/WhiteSur-cursors.git --depth=1
 cd WhiteSur-cursors && ./install.sh && cd ..
 
-# Apply the theme immediately (Only works in a live KDE session)
-lookandfeeltool -a com.github.vinceliuice.WhiteSur-dark || echo "KDE Theme Apply skipped (non-KDE or VM environment)"
+# Apply the theme AND the desktop layout (taskbar/panel)
+# Using --copy-layout forces the taskbar configuration to apply immediately.
+if command -v plasma-apply-lookandfeel &> /dev/null; then
+    plasma-apply-lookandfeel -a com.github.vinceliuice.WhiteSur-dark --copy-layout
+else
+    lookandfeeltool -a com.github.vinceliuice.WhiteSur-dark || echo "Theme Apply failed"
+fi
 
 # --- 5. SERVICES & PERMISSIONS ---
 echo "--- Step 5: Enabling Services ---"
