@@ -1,39 +1,35 @@
 #!/bin/bash
 
-# ==============================================================================
-#  PROJECT: Ctrl Alt Ryan - The Ultimate Fedora 43 Bootstrap
-#  DESCRIPTION: High-Performance Engineering Environment + WhiteSur Aesthetic
-# ==============================================================================
-
 # --- 1. REPOSITORY SETUP & GPG KEYS ---
 echo "--- Step 1: Configuring Repositories & GPG Keys ---"
 sudo dnf clean all
-sudo rm -f /etc/yum.repos.d/lens.repo
 
-# Import GPG Keys manually to ensure DNF5 trust
+# Import GPG Keys manually
 sudo rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
 sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
 
-# Add Repos
+# Add Repos - Force using 'stable' paths if F43 metadata isn't ready
 sudo dnf config-manager addrepo --from-repofile=https://cli.github.com/packages/rpm/gh-cli.repo --overwrite
 sudo dnf config-manager addrepo --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo --overwrite
 sudo dnf config-manager addrepo --from-repofile=https://rpm.releases.hashicorp.com/fedora/hashicorp.repo --overwrite
 sudo dnf config-manager addrepo --from-repofile=https://pkgs.tailscale.com/stable/fedora/tailscale.repo --overwrite
 sudo dnf config-manager addrepo --from-repofile=https://brave-browser-rpm-release.s3.brave.com/brave-browser.repo --overwrite
-sudo dnf config-manager addrepo --from-repofile=https://packages.microsoft.com/yumrepos/edge/config.repo --overwrite
+
+# Fix for VS Code / Edge Repo (Standard Microsoft Repo)
+sudo sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo'
 
 # --- 2. DNF PACKAGE INSTALL ---
 echo "--- Step 2: Installing Engineering Stack ---"
-# Added 'sassc' and 'glib2-devel' - often needed for WhiteSur theme compilation
+# CRITICAL: Added 'git' and 'wget' here
 sudo dnf install -y --refresh \
-    ansible terraform vagrant gh \
+    git wget ansible terraform vagrant gh \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
-    awscli2 azure-cli k9s code \
-    brave-browser microsoft-edge-stable \
+    awscli2 azure-cli code \
+    brave-browser \
     tailscale ulauncher filezilla remmina \
     fastfetch neovim htop tree sassc glib2-devel \
     virt-manager virt-viewer libvirt libvirt-daemon-kvm \
-    dkms kernel-devel kernel-headers @virtualization
+    dkms kernel-devel kernel-headers
 
 # --- 3. FLATPAK INSTALLS ---
 echo "--- Step 3: Installing Flatpaks ---"
@@ -46,27 +42,26 @@ flatpak install -y flathub \
     com.obsproject.Studio org.angryip.ipscan
 
 # --- 4. THE WHITESUR "AESTHETIC" CLONE ---
-echo "--- Step 4: Git Cloning WhiteSur Suite (Theme, Icons, Cursors) ---"
+echo "--- Step 4: Git Cloning WhiteSur Suite ---"
+# Now that 'git' is installed in Step 2, this will work!
 mkdir -p ~/Downloads/build && cd ~/Downloads/build
 
-# 1. KDE Global Theme
 git clone https://github.com/vinceliuice/WhiteSur-kde.git --depth=1
 cd WhiteSur-kde && ./install.sh && cd ..
 
-# 2. Icons
 git clone https://github.com/vinceliuice/WhiteSur-icon-theme.git --depth=1
 cd WhiteSur-icon-theme && ./install.sh && cd ..
 
-# 3. Cursors
 git clone https://github.com/vinceliuice/WhiteSur-cursors.git --depth=1
 cd WhiteSur-cursors && ./install.sh && cd ..
 
-# Apply the theme immediately
-lookandfeeltool -a com.github.vinceliuice.WhiteSur-dark
+# Apply theme (Note: In a VM or clean install, this may need a session restart)
+lookandfeeltool -a com.github.vinceliuice.WhiteSur-dark || echo "Theme apply failed - install manually via KDE settings"
 
 # --- 5. SERVICES & PERMISSIONS ---
 echo "--- Step 5: Enabling Services ---"
 sudo systemctl daemon-reload
+# Services will now exist because the DNF install succeeded
 sudo systemctl enable --now docker tailscaled libvirtd
 sudo usermod -aG docker,libvirt $USER
 
