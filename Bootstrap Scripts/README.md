@@ -33,6 +33,6 @@ Copy and paste the following into your terminal:
 
 ```bash
 mkdir -p ~/Scripts && \
-curl -o ~/Scripts/fedora_bootstrap.sh [https://raw.githubusercontent.com/YOUR_USERNAME/ctrl-alt-ryan/main/fedora_bootstrap.sh](https://raw.githubusercontent.com/YOUR_USERNAME/ctrl-alt-ryan/main/fedora_bootstrap.sh) && \
+curl -o ~/Scripts/fedora_bootstrap.sh https://raw.githubusercontent.com/ryan/ctrl-alt-ryan/main/fedora_bootstrap.sh && \
 chmod +x ~/Scripts/fedora_bootstrap.sh && \
 ~/Scripts/fedora_bootstrap.sh 2>&1 | tee ~/Scripts/install_log.txt
