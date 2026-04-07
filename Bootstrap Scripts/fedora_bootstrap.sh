@@ -12,7 +12,6 @@ sudo dnf clean all
 sudo rm -f /etc/yum.repos.d/lens.repo
 
 # Manually define VS Code Repo (Standard Microsoft Repo)
-# DNF5 requires explicit repo files for maximum reliability
 sudo sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo'
 
 # Import GPG Keys manually to ensure trust
@@ -31,11 +30,10 @@ sudo dnf config-manager addrepo --from-repofile=https://packages.microsoft.com/y
 echo "--- Step 2: Installing Engineering Stack ---"
 
 # PART A: THE CORE ESSENTIALS
-# We install these first to ensure Git and Fastfetch are available for later steps.
 sudo dnf install -y git wget fastfetch tree sassc glib2-devel neovim htop
 
 # PART B: THE ENGINEERING TOOLS
-# Using --skip-unavailable ensures DNF5 doesn't abort the whole run if one repo is slow.
+# Using --skip-unavailable for Fedora 43 early-adopter stability
 sudo dnf install -y --refresh --skip-unavailable \
     ansible terraform vagrant gh code \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
@@ -56,29 +54,31 @@ flatpak install -y flathub \
     com.obsproject.Studio org.angryip.ipscan
 
 # --- 4. THE WHITESUR "AESTHETIC" CLONE ---
-echo "--- Step 4: Git Cloning WhiteSur Suite ---"
-rm -rf ~/Downloads/build
-mkdir -p ~/Downloads/build && cd ~/Downloads/build
+echo "--- Step 4: Applying Every Aesthetic Layer ---"
+rm -rf ~/Downloads/build && mkdir -p ~/Downloads/build && cd ~/Downloads/build
 
-# 1. KDE Global Theme
+# 1. Clone all components
 git clone https://github.com/vinceliuice/WhiteSur-kde.git --depth=1
-cd WhiteSur-kde && ./install.sh && cd ..
-
-# 2. Icons
 git clone https://github.com/vinceliuice/WhiteSur-icon-theme.git --depth=1
-cd WhiteSur-icon-theme && ./install.sh && cd ..
-
-# 3. Cursors
 git clone https://github.com/vinceliuice/WhiteSur-cursors.git --depth=1
+
+# 2. Run the installers
+cd WhiteSur-kde && ./install.sh && cd ..
+cd WhiteSur-icon-theme && ./install.sh && cd ..
 cd WhiteSur-cursors && ./install.sh && cd ..
 
-# Apply the theme AND the desktop layout (taskbar/panel)
-# Using --copy-layout forces the taskbar configuration to apply immediately.
-if command -v plasma-apply-lookandfeel &> /dev/null; then
-    plasma-apply-lookandfeel -a com.github.vinceliuice.WhiteSur-dark --copy-layout
-else
-    lookandfeeltool -a com.github.vinceliuice.WhiteSur-dark || echo "Theme Apply failed"
+# --- 4.5 CONFIG INJECTION (Senior Pro Move) ---
+echo "Injecting WhiteSur Layout Templates..."
+LAYOUT_SRC=$(find ~/Downloads/build/WhiteSur-kde -name "org.kde.plasma.desktop-layout.js" | head -n 1)
+if [ -f "$LAYOUT_SRC" ]; then
+    mkdir -p ~/.local/share/plasma/look-and-feel/com.github.vinceliuice.WhiteSur-dark/contents/layouts/
+    cp "$LAYOUT_SRC" ~/.local/share/plasma/look-and-feel/com.github.vinceliuice.WhiteSur-dark/contents/layouts/
 fi
+
+# Apply Appearance Settings via CLI
+plasma-apply-lookandfeel -a com.github.vinceliuice.WhiteSur-dark
+plasma-apply-colorscheme WhiteSurDark
+plasma-apply-cursortheme WhiteSur-cursors
 
 # --- 5. SERVICES & PERMISSIONS ---
 echo "--- Step 5: Enabling Services ---"
@@ -102,10 +102,16 @@ export LAB_DIR="$HOME/Lab/proxmox-k8s"
 EOF
 fi
 
-# --- 7. REVEAL ---
+# --- 7. REVEAL & INSTRUCTIONS ---
 cd ~
 clear
 fastfetch
-echo "------------------------------------------------"
-echo "  BOOTSTRAP COMPLETE - REBOOT FOR FULL EFFECT   "
-echo "------------------------------------------------"
+echo "-------------------------------------------------------"
+echo "  BOOTSTRAP COMPLETE - REBOOT FOR FULL EFFECT          "
+echo "-------------------------------------------------------"
+echo "  TO FINISH THE MAC-STYLE LAYOUT (NO REBOOT NEEDED):   "
+echo "  1. Open System Settings -> Global Theme              "
+echo "  2. Select 'WhiteSur Dark'                             "
+echo "  3. CHECK THE BOX 'Desktop Layout'                    "
+echo "  4. Click 'Apply'                                     "
+echo "-------------------------------------------------------"
